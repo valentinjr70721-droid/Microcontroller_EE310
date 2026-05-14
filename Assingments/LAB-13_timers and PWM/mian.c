@@ -1,97 +1,125 @@
+/************************************************************
+ * PROJECT TITLE: Servo Motor Control using PWM (CCP2)
+ *
+ * DESCRIPTION:
+ * This program controls a servo motor using PWM output on
+ * the PIC18F46K42. Two push buttons are used with internal
+ * pull-ups to control left and right movement. The servo
+ * position is adjusted by changing the PWM duty cycle.
+ *
+ * MCU: PIC18F46K42
+ * COMPILER: MPLAB XC8 (v2)
+ * CLOCK: Internal HFINTOSC @ 4 MHz
+ *
+ * VERSION: 1.0
+ * DATE: May 14, 2026
+ *
+ * AUTHOR: Miguel Valentin
+ ************************************************************/
+
+// ==============================
+// INPUTS
+// ==============================
+// RD0 → LEFT push button (active LOW, internal pull-up)
+// RD1 → RIGHT push button (active LOW, internal pull-up)
+//
+// ==============================
+// OUTPUTS
+// ==============================
+// RB3 → PWM output to servo (CCP2)
+//
+// ==============================
+// PWM DETAILS
+// ==============================
+// PWM Period: ~20 ms
+// Prescaler: 1:128
+// Servo range: duty values 10–78
+// Center: ~47
+// ==============================
 #include <xc.h>
 #include <stdint.h>
 #include "PWM.h"
-#include "Configfile.h"
+#include "configFile.h"
 
 #define _XTAL_FREQ 4000000
 
-// Push button inputs
-#define BTN_CENTER PORTBbits.RB5
-#define BTN_LEFT   PORTBbits.RB6
-#define BTN_RIGHT  PORTBbits.RB7
+// ==============================
+// BUTTONS (internal pull-ups)
+// Active LOW when pressed
+// ==============================
+#define BUTTON_LEFT   PORTDbits.RD0
+#define BUTTON_RIGHT  PORTDbits.RD1
 
-// Servo PWM limits
-#define SERVO_LEFT_LIMIT    22
-#define SERVO_MIDDLE_POS    51
-#define SERVO_RIGHT_LIMIT   81
+// ==============================
+// SERVO RANGE (adjusted values)
+// ==============================
+#define SERVO_MIN      10
+#define SERVO_MAX      78
 
-_Bool pwmState;
+uint8_t duty_value = 47;   // center position
 
-uint8_t servoPos      = SERVO_MIDDLE_POS;
-uint8_t previousPos   = SERVO_MIDDLE_POS;
-uint8_t updateDelay   = 0;
-
+// ==============================
+// MAIN
+// ==============================
 void main(void)
 {
-    // Set internal oscillator to 4 MHz
+    // CLOCK
     OSCSTATbits.HFOR = 1;
-    OSCFRQ = 0x02;
+    OSCFRQ = 0x02;   // 4 MHz
 
-    // Make PORTB digital
+    // DIGITAL SETUP
+    ANSELD = 0x00;   // digital pins only
+
+    TRISDbits.TRISD0 = 1; // input
+    TRISDbits.TRISD1 = 1; // input
+
+    // ==============================
+    // INTERNAL PULL-UPS ENABLE
+    // ==============================
+    WPUDbits.WPUD0 = 1;
+    WPUDbits.WPUD1 = 1;
+
+    // PORT B OUTPUTS (PWM)
     ANSELB = 0x00;
+    TRISB = 0x00;
 
-    // I/O directions
-    TRISBbits.TRISB2 = 0;   // PWM output to servo
-    TRISBbits.TRISB5 = 1;   // Center button
-    TRISBbits.TRISB6 = 1;   // Left button
-    TRISBbits.TRISB7 = 1;   // Right button
-
-    // Enable weak pull-ups for buttons
-    WPUBbits.WPUB5 = 1;
-    WPUBbits.WPUB6 = 1;
-    WPUBbits.WPUB7 = 1;
-
-    // Timer2 setup for ~20 ms servo period
+    // ==============================
+    // TIMER2 + PWM SETUP
+    // ==============================
     TMR2_Initialize();
-    T2PR = 155;
     TMR2_StartTimer();
 
-    // PWM setup
     PWM_Output_D8_Enable();
     PWM2_Initialize();
-    PWM2_LoadDutyValue(servoPos);
 
+    PWM2_LoadDutyValue(duty_value);
+
+    // small stabilization delay
+    __delay_ms(300);
+
+    // ==============================
+    // MAIN LOOP
+    // ==============================
     while(1)
     {
-        // Read PWM output status
-        pwmState = PWM2_OutputStatusGet();
-        PORTBbits.RB2 = pwmState;
-
-        // Wait for Timer2 overflow
-        if(PIR4bits.TMR2IF)
+        // RIGHT button (pressed = 0)
+        if(BUTTON_RIGHT == 0)
         {
-            PIR4bits.TMR2IF = 0;
+            if(duty_value < SERVO_MAX)
+                duty_value++;
 
-            updateDelay++;
+            PWM2_LoadDutyValue(duty_value);
+            __delay_ms(60);   // smoothing + debounce
+        }
 
-            // Slow down servo movement slightly
-            if(updateDelay >= 2)
-            {
-                updateDelay = 0;
+        // LEFT button (pressed = 0)
+        else if(BUTTON_LEFT == 0)
+        {
+            if(duty_value > SERVO_MIN)
+                duty_value--;
 
-                // Return to middle position
-                if(BTN_CENTER == 0)
-                {
-                    servoPos = SERVO_MIDDLE_POS;
-                }
-                // Move left
-                else if(BTN_LEFT == 0 && servoPos > SERVO_LEFT_LIMIT)
-                {
-                    servoPos--;
-                }
-                // Move right
-                else if(BTN_RIGHT == 0 && servoPos < SERVO_RIGHT_LIMIT)
-                {
-                    servoPos++;
-                }
-
-                // Only update PWM if position changed
-                if(servoPos != previousPos)
-                {
-                    PWM2_LoadDutyValue(servoPos);
-                    previousPos = servoPos;
-                }
-            }
+            PWM2_LoadDutyValue(duty_value);
+            __delay_ms(60);   // smoothing + debounce
         }
     }
 }
